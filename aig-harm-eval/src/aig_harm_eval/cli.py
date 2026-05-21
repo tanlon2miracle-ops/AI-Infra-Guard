@@ -122,5 +122,97 @@ def judge_cmd(resp_path: str, out_path: str, abstain_path: str, judges_spec: str
     click.echo(f"OK | n={len(results)} abstain={n_abs} kappa={kappa:.3f}")
 
 
+@main.command("run")
+@click.option("--dataset", "dataset_path", required=True, type=click.Path(exists=True))
+@click.option("--target", "target_spec", default="mock",
+              help="mock | oai:<model>[@env=VAR]")
+@click.option("--judges", "judges_spec", default="mock,mock")
+@click.option("--out-dir", "out_dir", default="dist/run", type=click.Path())
+@click.option("--max-items", default=None, type=int)
+@click.option("--qps", default=0.0, type=float)
+@click.option("--no-resume", is_flag=True, default=False)
+def run_cmd(dataset_path: str, target_spec: str, judges_spec: str,
+            out_dir: str, max_items: int | None, qps: float, no_resume: bool) -> None:
+    """End-to-end: dataset -> target -> dual judge -> HTML report."""
+    from pathlib import Path
+
+    from .judges import LLMJudge, MockJudge
+    from .pipelines import MockTarget, OpenAICompatibleTarget, RunConfig, run_eval
+
+    def _t(spec: str):
+        spec = spec.strip()
+        if spec == "mock":
+            return MockTarget()
+        if spec.startswith("oai:"):
+            rest = spec[4:]
+            model, _, env = rest.partition("@env=")
+            return OpenAICompatibleTarget(model=model, api_key_env=env or "OPENAI_API_KEY")
+        raise click.BadParameter(f"unknown target: {spec}")
+
+    def _j(spec: str):
+        spec = spec.strip()
+        if spec == "mock":
+            return MockJudge()
+        if spec.startswith("llm:"):
+            rest = spec[4:]
+            model, _, env = rest.partition("@env=")
+            return LLMJudge(model=model, api_key_env=env or "OPENAI_API_KEY")
+        raise click.BadParameter(f"unknown judge: {spec}")
+
+    target = _t(target_spec)
+    parts = [s for s in judges_spec.split(",") if s.strip()]
+    if len(parts) < 2:
+        raise click.BadParameter("need >=2 judges")
+    judges = [_j(p) for p in parts]
+    if all(isinstance(j, MockJudge) for j in judges):
+        for i, jj in enumerate(judges):
+            jj.judge_id = f"mock-v1#{i}"
+
+    res = run_eval(
+        dataset_path=Path(dataset_path),
+        target=target,
+        judges=judges,
+        out_dir=Path(out_dir),
+        cfg=RunConfig(qps=qps, max_items=max_items, resume=not no_resume),
+    )
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+
+
+@main.command("demo")
+@click.option("--n", default=10, type=int)
+@click.option("--out-dir", "out_dir", default="dist/demo", type=click.Path())
+def demo(n: int, out_dir: str) -> None:
+    """One-shot demo: build dataset, sample N, run mock target + mock judges."""
+    from pathlib import Path
+
+    from .judges import MockJudge
+    from .pipelines import MockTarget, RunConfig, run_eval
+
+    dist = Path("dist")
+    dataset_path = dist / "dataset.v1.jsonl"
+    if not dataset_path.exists():
+        build(out_path=dataset_path, stats_path=dist / "stats.md")
+    # sample first N
+    sample = Path(out_dir) / "sample.jsonl"
+    sample.parent.mkdir(parents=True, exist_ok=True)
+    with sample.open("w", encoding="utf-8") as f:
+        for i, line in enumerate(open(dataset_path, encoding="utf-8")):
+            if i >= n:
+                break
+            f.write(line)
+
+    judges = [MockJudge(), MockJudge()]
+    for i, jj in enumerate(judges):
+        jj.judge_id = f"mock-v1#{i}"
+    res = run_eval(
+        dataset_path=sample,
+        target=MockTarget(),
+        judges=judges,
+        out_dir=Path(out_dir),
+        cfg=RunConfig(max_items=n, resume=False),
+    )
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+
+
 if __name__ == "__main__":
     main()
