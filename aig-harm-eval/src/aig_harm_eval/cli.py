@@ -65,5 +65,62 @@ def generate(seed_file: str, out_path: str, n_per_seed: int, summary_path: str |
     click.echo(json.dumps(s, ensure_ascii=False))
 
 
+@main.command("judge")
+@click.option("--responses", "resp_path", required=True, type=click.Path(exists=True),
+              help="JSONL with {item: {...}, response: str} per line")
+@click.option("--out", "out_path", required=True, type=click.Path())
+@click.option("--abstain", "abstain_path", default="dist/abstain.csv", type=click.Path())
+@click.option("--judges", "judges_spec", default="mock,mock",
+              help="comma-separated: mock | llm:<model>[@env=VAR]")
+def judge_cmd(resp_path: str, out_path: str, abstain_path: str, judges_spec: str) -> None:
+    """Run dual-judge ensemble on a response JSONL."""
+    from pathlib import Path
+
+    from .judges import LLMJudge, MockJudge, cohen_kappa, ensemble, write_abstain_csv
+
+    def _build(spec: str):
+        spec = spec.strip()
+        if spec == "mock":
+            return MockJudge()
+        if spec.startswith("llm:"):
+            rest = spec[4:]
+            model, _, env = rest.partition("@env=")
+            return LLMJudge(model=model, api_key_env=env or "OPENAI_API_KEY")
+        raise click.BadParameter(f"unknown judge spec: {spec}")
+
+    parts = [s for s in judges_spec.split(",") if s.strip()]
+    if len(parts) < 2:
+        raise click.BadParameter("need >=2 judges; e.g. --judges mock,mock")
+    # disambiguate two mocks with judge_id suffix
+    judges_list = [_build(p) for p in parts]
+    if all(isinstance(j, MockJudge) for j in judges_list):
+        for i, j in enumerate(judges_list):
+            j.judge_id = f"mock-v1#{i}"
+
+    triples = []
+    for line in Path(resp_path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        d = json.loads(line)
+        triples.append((d["item"], d.get("response", "")))
+
+    results = ensemble(judges_list, triples)
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8") as f:
+        for r in results:
+            f.write(json.dumps({
+                "item_id": r.item_id,
+                "final_label": r.final_label,
+                "final_severity": r.final_severity,
+                "abstained": r.abstained,
+                "verdicts": [v.to_dict() for v in r.verdicts],
+            }, ensure_ascii=False) + "\n")
+    n_abs = write_abstain_csv(results, Path(abstain_path))
+    kappa = cohen_kappa([r.verdicts[0] for r in results], [r.verdicts[1] for r in results])
+    click.echo(f"OK | n={len(results)} abstain={n_abs} kappa={kappa:.3f}")
+
+
 if __name__ == "__main__":
     main()
