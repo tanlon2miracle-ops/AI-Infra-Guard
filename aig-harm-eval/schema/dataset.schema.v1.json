@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tanlon2miracle-ops/AI-Infra-Guard/schema/dataset.schema.v1.json",
+  "title": "AIG Harm-Eval Dataset Item v1",
+  "type": "object",
+  "required": ["id", "prompt", "category", "language", "source", "license", "hash"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "全局唯一 ID。格式: <source_slug>-<sha1[:12]>，例如 harmbench-3f2a1c9d0b8e",
+      "pattern": "^[a-z0-9][a-z0-9_-]*-[a-f0-9]{12}$"
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "description": "攻击/测试用 query 原文（保留原始大小写与标点；不做归一化）"
+    },
+    "prompt_normalized": {
+      "type": "string",
+      "description": "归一化后的 prompt（小写、去多余空白、去零宽字符），仅用于去重 hash"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "bias",
+        "toxicity",
+        "violent",
+        "cbrn",
+        "cyberattack",
+        "illegal_activity",
+        "non_violent_illegal",
+        "unethical",
+        "misinformation",
+        "privacy_pii",
+        "intellectual_property",
+        "copyright",
+        "personal_safety",
+        "self_harm",
+        "minor_safety",
+        "sexual_content",
+        "graphic_content",
+        "prompt_injection",
+        "prompt_leakage",
+        "jailbreak_generic",
+        "over_refusal",
+        "robustness",
+        "custom"
+      ],
+      "description": "顶层风险类别（与 deepteam vulnerabilities 对齐 + 扩展）"
+    },
+    "sub_category": {
+      "type": "string",
+      "description": "细分类，自由文本（例：financial_fraud / phishing / bioweapon_synthesis）"
+    },
+    "language": {
+      "type": "string",
+      "enum": ["zh", "en", "zh-tw", "ja", "ko", "es", "fr", "de", "ru", "ar", "mixed", "other"],
+      "description": "主语言 ISO-639-1"
+    },
+    "source": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "数据集名（如 harmbench / advbench / aig-internal）" },
+        "version": { "type": "string", "description": "数据集版本号或下载日期 YYYY-MM-DD" },
+        "url": { "type": "string", "format": "uri" },
+        "row_id": { "type": "string", "description": "源数据集中的原始行号/ID" }
+      }
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX 许可证 ID 或 CUSTOM/RESTRICTED；CBRN 等高敏感数据必须显式标 RESTRICTED",
+      "examples": ["MIT", "Apache-2.0", "CC-BY-4.0", "CC-BY-NC-4.0", "RESTRICTED", "CUSTOM"]
+    },
+    "severity": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "description": "潜在危害度 1-5：1 轻微/灰色，3 明显有害，5 极端高危（CBRN/儿童安全等）"
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard", "extreme"],
+      "description": "攻击难度（对主流对齐模型而言）"
+    },
+    "attack_method": {
+      "type": "string",
+      "description": "如已包装攻击手法，标注方法名（如 roleplay / encoding_base64 / crescendo）；未包装为 raw",
+      "default": "raw"
+    },
+    "turns": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "对话轮次；多轮在 dialog 字段给出"
+    },
+    "dialog": {
+      "type": "array",
+      "description": "多轮对话场景下使用",
+      "items": {
+        "type": "object",
+        "required": ["role", "content"],
+        "properties": {
+          "role": { "enum": ["system", "user", "assistant"] },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "expected_behavior": {
+      "type": "string",
+      "enum": ["refuse", "safe_complete", "partial_safe", "depends"],
+      "description": "期望的安全回复行为；用于 judge 对照"
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "自由标签（如 finance / minor / chinese-slang / homophone）"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256(prompt_normalized)，用于精确去重"
+    },
+    "near_dup_of": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "近似重复指向的其它 id（MinHash/Jaccard ≥ 0.85）"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "纳入本数据集的时间"
+    },
+    "compliance": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "合规审查痕迹",
+      "properties": {
+        "reviewed": { "type": "boolean", "default": false },
+        "reviewer": { "type": "string" },
+        "reviewed_at": { "type": "string", "format": "date-time" },
+        "redacted": { "type": "boolean", "default": false, "description": "是否对高敏感细节做过脱敏" },
+        "notes": { "type": "string" }
+      }
+    },
+    "extra": {
+      "type": "object",
+      "description": "源数据集保留字段，不强制 schema",
+      "additionalProperties": true
+    }
+  }
+}
